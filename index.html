@@ -1,0 +1,503 @@
+<title>星跳</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap">
+<style>
+/* layout: one full-screen canvas; score and panels float above it, centred */
+:root{
+  --space-deep:#12102e;
+  --space-haze:#2b1a4f;
+  --ink:#f6efe1;
+  --ink-dim:#b9b0d6;
+  --ember:#ff7a59;
+  --tide:#e0408a;
+  --sun:#ffc857;
+  --panel:rgba(18,16,46,.78);
+  --font-display:"ZCOOL KuaiLe","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --font-body:system-ui,-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  color-scheme:dark;
+}
+html{box-sizing:border-box;height:100%}
+*,*::before,*::after{box-sizing:inherit}
+body{
+  height:100%;background:var(--space-deep);color:var(--ink);
+  font-family:var(--font-body);font-size:16px;line-height:1.6;
+  overflow:hidden;-webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent;
+}
+#stage{position:relative;height:100%;overflow:hidden;touch-action:none;cursor:pointer}
+#game{position:absolute;inset:0;width:100%;height:100%;display:block}
+
+.hud{
+  position:absolute;inset:0 0 auto 0;display:flex;justify-content:space-between;align-items:flex-start;
+  padding-block:14px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+  pointer-events:none;
+}
+.score{font-family:var(--font-body);font-weight:800;font-size:44px;line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 2px 0 rgba(18,16,46,.6)}
+.best{font-size:13px;color:var(--ink-dim);letter-spacing:.06em;margin-top:6px;font-variant-numeric:tabular-nums}
+.sound{
+  pointer-events:auto;font:inherit;font-size:13px;color:var(--ink-dim);
+  background:var(--panel);border:1px solid rgba(246,239,225,.18);border-radius:999px;
+  padding:6px 14px;cursor:pointer;
+}
+.sound:hover{color:var(--ink)}
+
+.overlay{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  padding-block:24px;
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+}
+.panel{
+  width:100%;max-width:340px;text-align:center;
+  background:var(--panel);border:1px solid rgba(246,239,225,.14);border-radius:28px;
+  padding:30px 26px 26px;display:flex;flex-direction:column;gap:14px;align-items:center;
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);
+}
+.panel h1{
+  font-family:var(--font-display);font-weight:400;font-size:68px;line-height:1;margin:0;
+  letter-spacing:.08em;text-indent:.08em;color:var(--sun);text-shadow:0 4px 0 var(--ember);
+}
+.panel h2{font-family:var(--font-display);font-weight:400;font-size:30px;line-height:1.2;margin:0;color:var(--ink);text-wrap:balance}
+.panel p{margin:0;color:var(--ink-dim);font-size:15px;text-wrap:pretty}
+.final{font-family:var(--font-body);font-weight:800;font-size:76px;line-height:1;color:var(--sun);font-variant-numeric:tabular-nums}
+.go{
+  font-family:var(--font-display);font-size:24px;letter-spacing:.1em;text-indent:.1em;
+  color:var(--space-deep);background:var(--sun);border:0;border-radius:999px;
+  padding:10px 40px;margin-top:6px;cursor:pointer;box-shadow:0 5px 0 var(--ember);
+}
+.go:active{transform:translateY(3px);box-shadow:0 2px 0 var(--ember)}
+.hint{font-size:12px;letter-spacing:.08em;color:var(--ink-dim);opacity:.8}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+</style>
+
+<div id="stage">
+  <canvas id="game" aria-label="星跳游戏画面"></canvas>
+
+  <div class="hud">
+    <div>
+      <div class="score" id="score" aria-live="polite">0</div>
+      <div class="best">最高 <span id="best">0</span></div>
+    </div>
+    <button class="sound" id="sound" type="button" aria-pressed="true">声音 开</button>
+  </div>
+
+  <div class="overlay" id="titleScreen">
+    <div class="panel">
+      <h1>星跳</h1>
+      <p>你绕着星球转圈。看准虚线指的方向点一下，把自己甩向下一颗星球。身后的星潮会一直往上涨，别被它追上。</p>
+      <button class="go" id="startBtn" type="button">出发</button>
+      <div class="hint">点屏幕任意位置，或按空格</div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overScreen" hidden>
+    <div class="panel">
+      <h2 id="overTitle">飘进了深空</h2>
+      <div class="final" id="finalScore">0</div>
+      <p id="overNote">最高 0</p>
+      <button class="go" id="againBtn" type="button">再来</button>
+      <div class="hint">点屏幕任意位置，或按空格</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const cv = document.getElementById('game');
+  const ctx = cv.getContext('2d');
+  const $ = id => document.getElementById(id);
+  const scoreEl = $('score'), bestEl = $('best');
+  const titleScreen = $('titleScreen'), overScreen = $('overScreen');
+  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const css = getComputedStyle(document.documentElement);
+  const C = n => css.getPropertyValue(n).trim();
+  const INK = C('--ink'), SUN = C('--sun'), EMBER = C('--ember'), TIDE = C('--tide');
+  const DEEP = C('--space-deep'), HAZE = C('--space-haze');
+  const PLANET_COLORS = ['#ff7a59', '#ffc857', '#7fe0c3', '#b79cff', '#6fb7ff', '#ff9ec4'];
+  const CANVAS_FONT = '"ZCOOL KuaiLe","PingFang SC","Microsoft YaHei",sans-serif';
+
+  // ---------- tuning ----------
+  const ORBIT_GAP = 20;     // orbit height above the surface
+  const CAPTURE = 38;       // how far from the surface a planet catches you
+  const FLY_SPEED = 380;
+  const ANCHOR = 0.62;      // where the current planet sits on screen (0 top, 1 bottom)
+
+  // ---------- view ----------
+  let W = 0, H = 0, dpr = 1, scale = 1, viewW = 400, viewH = 640;
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    W = Math.max(1, r.width); H = Math.max(1, r.height);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    scale = Math.min(W / 400, H / 640);
+    viewW = W / scale; viewH = H / scale;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- storage ----------
+  let best = 0;
+  try { best = parseInt(localStorage.getItem('xingtiao-best') || '0', 10) || 0; } catch (e) {}
+  function saveBest() { try { localStorage.setItem('xingtiao-best', String(best)); } catch (e) {} }
+  bestEl.textContent = best;
+
+  // ---------- sound ----------
+  let audio = null, soundOn = true;
+  function ensureAudio() {
+    if (audio || !soundOn) return;
+    try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; }
+  }
+  function tone(freq, dur, type, vol, slideTo) {
+    if (!audio || !soundOn) return;
+    const t0 = audio.currentTime;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type || 'sine';
+    o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    g.gain.setValueAtTime(vol || 0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(audio.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  const SCALE_NOTES = [392, 440, 523, 587, 659, 784, 880, 1047];
+  const sfx = {
+    launch: () => tone(300, 0.16, 'triangle', 0.10, 620),
+    land: n => { const f = SCALE_NOTES[Math.min(n, SCALE_NOTES.length - 1)]; tone(f, 0.22, 'sine', 0.14); tone(f * 1.5, 0.28, 'sine', 0.06); },
+    star: () => { tone(1320, 0.10, 'square', 0.05); setTimeout(() => tone(1760, 0.14, 'square', 0.05), 70); },
+    die: () => tone(260, 0.6, 'sawtooth', 0.10, 55),
+  };
+
+  // ---------- world ----------
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  let state = 'title';            // title | play | over
+  let planets, dust, sparks, floats, trail, player;
+  let score, combo, camY, tideY, tideAwake, time, overAt, shake, planetCount;
+
+  const backdrop = [];
+  for (let i = 0; i < 90; i++) backdrop.push({ x: Math.random(), y: Math.random(), depth: rand(0.08, 0.5), size: rand(0.6, 1.8), tw: rand(0, 6.28) });
+
+  function addPlanet() {
+    const prev = planets[planets.length - 1];
+    const n = planetCount++;
+    const hard = Math.min(n, 40) / 40;
+    let x;
+    do { x = clamp(prev.baseX + rand(-175, 175), -140, 140); } while (Math.abs(x - prev.baseX) < 30 && Math.random() < 0.8);
+    const y = prev.y - rand(150 + hard * 25, 205 + hard * 35);
+    const p = {
+      baseX: x, x, y, r: rand(24 - hard * 5, 38 - hard * 8),
+      color: PLANET_COLORS[n % PLANET_COLORS.length],
+      visited: false, pulse: 0, tilt: rand(-0.5, 0.5),
+      sway: n > 9 && Math.random() < 0.35 ? rand(18, 34) : 0,
+      swayRate: rand(0.7, 1.3), swayPhase: rand(0, 6.28),
+    };
+    planets.push(p);
+    if (Math.random() < 0.6) {
+      const mx = (prev.baseX + x) / 2, my = (prev.y + y) / 2;
+      dust.push({ x: clamp(mx + rand(-45, 45), -165, 165), y: my + rand(-20, 20), taken: false, spin: rand(0, 6.28) });
+    }
+  }
+
+  function reset() {
+    planets = [{ baseX: 0, x: 0, y: 0, r: 34, color: PLANET_COLORS[5], visited: true, pulse: 0, tilt: 0.3, sway: 0, swayRate: 1, swayPhase: 0 }];
+    dust = []; sparks = []; floats = []; trail = [];
+    planetCount = 0;
+    for (let i = 0; i < 8; i++) addPlanet();
+    const home = planets[0];
+    player = { mode: 'orbit', planet: home, from: null, ang: Math.PI * 0.75, dir: 1, orbR: home.r + ORBIT_GAP, x: 0, y: 0, vx: 0, vy: 0, flyT: 0, landedAt: 0 };
+    score = 0; combo = 0; camY = 0; time = 0; shake = 0;
+    tideY = 0.38 * viewH + 140; tideAwake = false;
+    scoreEl.textContent = '0';
+    placeOnOrbit();
+  }
+
+  function placeOnOrbit() {
+    const p = player.planet;
+    player.x = p.x + Math.cos(player.ang) * player.orbR;
+    player.y = p.y + Math.sin(player.ang) * player.orbR;
+  }
+
+  function burst(x, y, color, count, speed) {
+    if (reduceMotion) count = Math.ceil(count / 4);
+    for (let i = 0; i < count; i++) {
+      const a = rand(0, 6.28), s = rand(speed * 0.3, speed);
+      sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: rand(0.35, 0.8), age: 0, color, size: rand(1.5, 3.5) });
+    }
+  }
+  function floatText(x, y, text, color) { floats.push({ x, y, text, color, age: 0 }); }
+
+  // ---------- actions ----------
+  function start() {
+    if (state === 'play') return;
+    reset();
+    state = 'play';
+    titleScreen.hidden = true; overScreen.hidden = true;
+    ensureAudio();
+    if (audio && audio.state === 'suspended') audio.resume();
+  }
+
+  function launch() {
+    if (player.mode !== 'orbit') return;
+    const p = player.planet;
+    player.mode = 'fly'; player.from = p; player.flyT = 0;
+    player.vx = -Math.sin(player.ang) * player.dir * FLY_SPEED;
+    player.vy = Math.cos(player.ang) * player.dir * FLY_SPEED;
+    combo = (time - player.landedAt < 1.3 && score > 0) ? combo + 1 : 0;
+    tideAwake = true;
+    burst(player.x, player.y, INK, 6, 90);
+    sfx.launch();
+  }
+
+  function land(p, dist) {
+    player.mode = 'orbit'; player.planet = p;
+    const rx = player.x - p.x, ry = player.y - p.y;
+    player.ang = Math.atan2(ry, rx);
+    player.orbR = Math.max(dist, p.r + 6);
+    player.dir = (rx * player.vy - ry * player.vx) >= 0 ? 1 : -1;
+    player.landedAt = time;
+    p.pulse = 1;
+    if (!p.visited) {
+      p.visited = true;
+      const gain = 1 + Math.min(combo, 3);
+      score += gain;
+      scoreEl.textContent = score;
+      floatText(p.x, p.y - p.r - 30, combo > 0 ? '连跳 +' + gain : '+1', combo > 0 ? SUN : INK);
+      burst(player.x, player.y, p.color, 16, 170);
+      sfx.land(combo);
+      shake = Math.max(shake, 3 + combo);
+    } else {
+      combo = 0;
+      tone(330, 0.12, 'sine', 0.08);
+    }
+  }
+
+  function die(reason) {
+    state = 'over'; overAt = performance.now();
+    burst(player.x, player.y, EMBER, 30, 240);
+    burst(player.x, player.y, INK, 14, 140);
+    shake = 10;
+    sfx.die();
+    const isBest = score > best;
+    if (isBest) { best = score; saveBest(); bestEl.textContent = best; }
+    $('overTitle').textContent = reason === 'tide' ? '被星潮吞没了' : '飘进了深空';
+    $('finalScore').textContent = score;
+    $('overNote').textContent = isBest && score > 0 ? '新纪录！' : '最高 ' + best;
+    setTimeout(() => { if (state === 'over') { overScreen.hidden = false; $('againBtn').focus({ preventScroll: true }); } }, 550);
+  }
+
+  // ---------- update ----------
+  function update(dt) {
+    time += dt;
+    for (const p of planets) {
+      if (p.sway) p.x = p.baseX + Math.sin(time * p.swayRate + p.swayPhase) * p.sway;
+      if (p.pulse > 0) p.pulse = Math.max(0, p.pulse - dt * 2.5);
+    }
+
+    if (state !== 'over') {
+      if (player.mode === 'orbit') {
+        const p = player.planet;
+        const speed = 150 + Math.min(score, 40) * 1.5;
+        player.orbR += (p.r + ORBIT_GAP - player.orbR) * Math.min(1, dt * 8);
+        player.ang += player.dir * (speed / player.orbR) * dt;
+        placeOnOrbit();
+      } else {
+        player.x += player.vx * dt; player.y += player.vy * dt; player.flyT += dt;
+        for (const p of planets) {
+          if (p === player.from) continue;
+          const d = Math.hypot(player.x - p.x, player.y - p.y);
+          if (d < p.r + CAPTURE) { land(p, d); break; }
+        }
+        if (player.mode === 'fly') {
+          for (const s of dust) {
+            if (!s.taken && Math.hypot(player.x - s.x, player.y - s.y) < 20) {
+              s.taken = true; score += 2; scoreEl.textContent = score;
+              floatText(s.x, s.y - 14, '星尘 +2', SUN);
+              burst(s.x, s.y, SUN, 12, 150); sfx.star();
+            }
+          }
+          const top = camY - ANCHOR * viewH;
+          if (Math.abs(player.x) > viewW / 2 + 40 || player.y < top - 80 || player.flyT > 2.2) die('lost');
+        }
+      }
+
+      trail.push({ x: player.x, y: player.y });
+      if (trail.length > 22) trail.shift();
+
+      // camera follows upward progress
+      const target = player.mode === 'orbit' ? player.planet.y : Math.min(camY, player.y + 60);
+      camY += (target - camY) * Math.min(1, dt * 4);
+
+      // the tide
+      if (state === 'play') {
+        if (tideAwake) tideY -= (22 + Math.min(score, 40) * 1.2) * dt;
+        tideY = Math.min(tideY, camY + (1 - ANCHOR) * viewH + 140);
+        if (state === 'play' && player.y > tideY - 6) die('tide');
+      }
+
+      // keep the sky stocked, drop what the tide has covered
+      while (planets[planets.length - 1].y > camY - viewH * 1.6) addPlanet();
+      if (planets.length > 24) planets.splice(0, planets.length - 24);
+      if (dust.length > 24) dust.splice(0, dust.length - 24);
+    } else if (trail.length) {
+      trail.shift();
+    }
+
+    for (const s of sparks) { s.age += dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 0.96; s.vy *= 0.96; }
+    sparks = sparks.filter(s => s.age < s.life);
+    for (const f of floats) { f.age += dt; f.y -= 34 * dt; }
+    floats = floats.filter(f => f.age < 1);
+    shake = Math.max(0, shake - dt * 30);
+  }
+
+  // ---------- draw ----------
+  function drawPlanet(p) {
+    const glow = ctx.createRadialGradient(p.x, p.y, p.r * 0.6, p.x, p.y, p.r + 26);
+    glow.addColorStop(0, p.color + '55'); glow.addColorStop(1, p.color + '00');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 26, 0, 6.2832); ctx.fill();
+
+    if (!p.visited) {
+      ctx.strokeStyle = 'rgba(246,239,225,.22)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 7]);
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r + CAPTURE, time * 0.4, time * 0.4 + 6.2832); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    const r = p.r * (1 + p.pulse * 0.12);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.2832); ctx.clip();
+    ctx.fillStyle = p.color; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+    ctx.translate(p.x, p.y); ctx.rotate(p.tilt);
+    ctx.fillStyle = 'rgba(255,255,255,.2)';
+    ctx.fillRect(-r, -r * 0.42, r * 2, r * 0.2);
+    ctx.fillRect(-r, r * 0.1, r * 2, r * 0.11);
+    ctx.rotate(-p.tilt);
+    ctx.fillStyle = 'rgba(18,16,46,.3)';
+    ctx.beginPath(); ctx.arc(r * 0.5, r * 0.5, r * 1.05, 0, 6.2832); ctx.fill();
+    ctx.restore();
+
+    if (p.visited) {
+      ctx.strokeStyle = 'rgba(246,239,225,.5)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 4 + p.pulse * 14, 0, 6.2832); ctx.stroke();
+    }
+  }
+
+  function drawDust(s) {
+    if (s.taken) return;
+    const pulse = 1 + Math.sin(time * 4 + s.spin) * 0.15, a = 7 * pulse, b = 2.4;
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(time * 0.8 + s.spin);
+    ctx.fillStyle = SUN; ctx.shadowColor = SUN; ctx.shadowBlur = 12;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) { const rr = i % 2 ? b : a, an = i * Math.PI / 4; ctx.lineTo(Math.cos(an) * rr, Math.sin(an) * rr); }
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  function drawTide() {
+    const top = camY - ANCHOR * viewH, bottom = top + viewH;
+    if (tideY > bottom + 30) return;
+    const left = -viewW / 2 - 10, right = viewW / 2 + 10;
+    const g = ctx.createLinearGradient(0, tideY - 24, 0, tideY + 220);
+    g.addColorStop(0, TIDE + '00'); g.addColorStop(0.12, TIDE + 'cc'); g.addColorStop(0.5, '#8a2a8f'); g.addColorStop(1, DEEP);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(left, bottom + 40);
+    for (let x = left; x <= right; x += 12) ctx.lineTo(x, tideY + Math.sin(x * 0.035 + time * 2.2) * 7 + Math.sin(x * 0.09 - time * 3.1) * 3);
+    ctx.lineTo(right, bottom + 40); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,214,235,.75)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = left; x <= right; x += 12) ctx.lineTo(x, tideY + Math.sin(x * 0.035 + time * 2.2) * 7 + Math.sin(x * 0.09 - time * 3.1) * 3);
+    ctx.stroke();
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, DEEP); bg.addColorStop(1, HAZE);
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = INK;
+    for (const s of backdrop) {
+      const y = (((s.y * H - camY * scale * s.depth) % H) + H) % H;
+      ctx.globalAlpha = 0.25 + 0.35 * (0.5 + 0.5 * Math.sin(time * 1.5 + s.tw)) * (s.depth * 2);
+      ctx.fillRect(s.x * W, y, s.size, s.size);
+    }
+    ctx.globalAlpha = 1;
+
+    const sx = reduceMotion ? 0 : rand(-shake, shake), sy = reduceMotion ? 0 : rand(-shake, shake);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (W / 2 + sx), dpr * (H * ANCHOR - camY * scale + sy));
+
+    for (const s of dust) drawDust(s);
+    for (const p of planets) drawPlanet(p);
+
+    // aim line: where a tap would send you
+    if (state !== 'over' && player.mode === 'orbit') {
+      const dx = -Math.sin(player.ang) * player.dir, dy = Math.cos(player.ang) * player.dir;
+      ctx.strokeStyle = 'rgba(246,239,225,.5)'; ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.setLineDash([1, 9]);
+      ctx.beginPath(); ctx.moveTo(player.x + dx * 12, player.y + dy * 12); ctx.lineTo(player.x + dx * 150, player.y + dy * 150); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // comet trail and head
+    for (let i = 1; i < trail.length; i++) {
+      const k = i / trail.length;
+      ctx.strokeStyle = 'rgba(255,200,87,' + (k * 0.7).toFixed(3) + ')';
+      ctx.lineWidth = 1 + k * 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(trail[i - 1].x, trail[i - 1].y); ctx.lineTo(trail[i].x, trail[i].y); ctx.stroke();
+    }
+    if (state !== 'over') {
+      ctx.fillStyle = INK; ctx.shadowColor = SUN; ctx.shadowBlur = 18;
+      ctx.beginPath(); ctx.arc(player.x, player.y, 6.5, 0, 6.2832); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    for (const s of sparks) {
+      ctx.globalAlpha = 1 - s.age / s.life; ctx.fillStyle = s.color;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, 6.2832); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    drawTide();
+
+    ctx.textAlign = 'center'; ctx.font = '18px ' + CANVAS_FONT;
+    for (const f of floats) {
+      ctx.globalAlpha = 1 - f.age; ctx.fillStyle = f.color;
+      ctx.fillText(f.text, clamp(f.x, -viewW / 2 + 50, viewW / 2 - 50), f.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- loop ----------
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000); last = now;
+    update(dt); draw();
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- input ----------
+  function act() {
+    if (state === 'play') launch();
+    else if (state === 'title' || performance.now() - overAt > 500) start();
+  }
+  stage.addEventListener('pointerdown', e => { if (e.target.closest('.sound')) return; e.preventDefault(); act(); });
+  window.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); act(); }
+  });
+  $('startBtn').addEventListener('click', () => { if (state !== 'play') start(); });
+  $('againBtn').addEventListener('click', () => { if (state !== 'play') start(); });
+  $('sound').addEventListener('click', e => {
+    soundOn = !soundOn;
+    e.currentTarget.textContent = soundOn ? '声音 开' : '声音 关';
+    e.currentTarget.setAttribute('aria-pressed', String(soundOn));
+    if (soundOn) ensureAudio();
+    e.currentTarget.blur();
+  });
+
+  reset();
+  requestAnimationFrame(frame);
+})();
+</script>
